@@ -54,6 +54,32 @@ Depois disso, **todo** frame de texto enviado é repassado aos demais clientes c
 - Nota de implementação: não há backpressure por conexão — um cliente lento acumula frames no
   buffer de saída do próprio WebSocket. Isso deve ser levado em conta nos testes de carga.
 
+## Cliente WebSocket para teste manual
+
+`scripts/ws_client.py` abre conexões no `/ws/message`, imprime o que chega e envia o que você
+digitar — sem depender do pacote `app`.
+
+```bash
+uv run python scripts/ws_client.py                              # 1 conexao, modo interativo
+uv run python scripts/ws_client.py -n 2                         # 2 conexoes: o teclado envia pela conn1
+uv run python scripts/ws_client.py -m '{"texto":"oi"}' -i 0.5   # envia sozinho a cada 0,5 s
+uv run python scripts/ws_client.py -u ws://127.0.0.1:8001/ws/message
+```
+
+No modo interativo, digite e pressione Enter para enviar; `exit` ou Ctrl+C encerram. Com `-n 2`
+dá para ver que a mensagem enviada pela conn1 chega na conn2 e **não** volta para quem enviou:
+
+```
+conn1/917b3988 conectada (instance=instance-…, usuarios nesta instancia=1)
+conn2/a48d9a46 conectada (instance=instance-…, usuarios nesta instancia=2)
+conn1/917b3988 -> ola mundo
+conn2/a48d9a46 <- payload="ola mundo" de=917b3988 instance=instance-…
+```
+
+Para testar o cenário entre instâncias, aponte um cliente para cada porta em terminais separados
+(`-u ws://127.0.0.1:8000/ws/message` e `-u ws://127.0.0.1:8001/ws/message`). Hoje nada atravessa
+de uma instância para a outra — é exatamente o que o barramento vai resolver.
+
 ## Estrutura
 
 ```
@@ -66,6 +92,8 @@ app/
     websocket.py        # WS /ws/message + função publish() -> ponto de extensão do barramento
   ws/
     manager.py          # ConnectionManager: registro das conexões locais, send/broadcast/disconnect
+scripts/
+  ws_client.py          # cliente WebSocket de linha de comando (teste manual)
 tests/
   test_api.py           # testes de fumaça (HTTP + broadcast via WebSocket)
 ```
