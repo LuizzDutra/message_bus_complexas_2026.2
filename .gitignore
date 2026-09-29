@@ -1,0 +1,16 @@
+# Dependencias
+.venv/
+__pycache__/
+*.py[cod]
+
+# Ambiente
+.env
+
+# Ferramentas
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+
+/.reasonix/
