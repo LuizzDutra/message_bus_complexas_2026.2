@@ -1,0 +1,98 @@
+# Sobe N instancias independentes do servidor WebSocket (cada uma com seu INSTANCE_ID).
+# Hoje a entrega e local a cada instancia: use isto para reproduzir o problema que o
+# barramento (Redis/RabbitMQ) vai resolver. Ver secao "Docker" no README.
+name: complexas
+
+x-app: &app
+  build:
+    context: .
+  image: complexas:local
+  restart: unless-stopped
+  environment:
+    HOST: 0.0.0.0
+    PORT: "8000"
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    # Quando o barramento existir, aponte as instancias para os servicos abaixo:
+    # REDIS_URL: redis://redis:6379/0
+    # RABBITMQ_URL: amqp://complexas:complexas@rabbitmq:5672/
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)"
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 5s
+  networks:
+    - bus
+
+services:
+  instance-1:
+    <<: *app
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      INSTANCE_ID: instance-1
+    ports:
+      - "8000:8000"
+
+  instance-2:
+    <<: *app
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      INSTANCE_ID: instance-2
+    ports:
+      - "8001:8000"
+
+  instance-3:
+    <<: *app
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      INSTANCE_ID: instance-3
+    ports:
+      - "8002:8000"
+
+  # Brokers ainda NAO sao usados pela aplicacao. Suba com:
+  #   docker compose --profile brokers up --build
+  redis:
+    image: redis:7-alpine
+    profiles: ["brokers"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - bus
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    profiles: ["brokers"]
+    environment:
+      RABBITMQ_DEFAULT_USER: complexas
+      RABBITMQ_DEFAULT_PASS: complexas
+    ports:
+      - "5672:5672"
+      - "15672:15672" # console web (http://localhost:15672)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - bus
+
+networks:
+  bus:
+    driver: bridge

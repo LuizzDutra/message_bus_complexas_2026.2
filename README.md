@@ -23,6 +23,42 @@ uv run python -m app.main      # usa HOST/PORT do .env
 Docs interativas: `http://127.0.0.1:8000/docs` (o `/ws/message` não aparece lá, WebSocket não é
 documentável no OpenAPI).
 
+## Docker Compose
+
+`compose.yaml` sobe 3 instâncias do servidor, cada uma com seu `INSTANCE_ID`:
+
+```bash
+docker compose up --build          # instâncias nas portas 8000, 8001 e 8002
+docker compose up --build -d       # em background
+docker compose ps                  # status/healthcheck de cada instância
+docker compose logs -f instance-1
+docker compose down
+```
+
+| Serviço      | Porta local | `INSTANCE_ID` |
+| ------------ | ----------- | ------------- |
+| `instance-1` | 8000        | `instance-1`  |
+| `instance-2` | 8001        | `instance-2`  |
+| `instance-3` | 8002        | `instance-3`  |
+
+A imagem (`Dockerfile`) usa a base do `uv` com Python 3.11, instala a partir do `uv.lock` e roda
+como usuário não-root. O `healthcheck` consulta `/api/health` dentro do container.
+
+Redis e RabbitMQ já estão declarados no compose, mas **não são usados pela aplicação ainda** — eles
+só sobem com o profile `brokers`:
+
+```bash
+docker compose --profile brokers up --build
+# Redis: localhost:6379 | RabbitMQ: localhost:5672 (console em http://localhost:15672)
+```
+
+Para ver o problema entre instâncias, conecte um cliente em cada porta:
+
+```bash
+uv run python scripts/ws_client.py -u ws://127.0.0.1:8000/ws/message -n 2
+uv run python scripts/ws_client.py -u ws://127.0.0.1:8001/ws/message -n 2
+```
+
 ## Endpoints
 
 | Método | Rota                 | Descrição                                                              |
@@ -96,6 +132,8 @@ scripts/
   ws_client.py          # cliente WebSocket de linha de comando (teste manual)
 tests/
   test_api.py           # testes de fumaça (HTTP + broadcast via WebSocket)
+compose.yaml            # 3 instâncias + Redis/RabbitMQ (profile brokers)
+Dockerfile              # imagem da aplicação (Python 3.11 + uv)
 ```
 
 ## Testes e lint
@@ -111,6 +149,5 @@ uv run ruff format .
 1. Implementar a variante **Redis Pub/Sub** (`publish` → `PUBLISH` + task de `SUBSCRIBE` por
    instância).
 2. Implementar a variante **RabbitMQ** (exchange fanout + fila durável por instância, com acks).
-3. Subir N instâncias com `docker compose` (`INSTANCE_ID=instance-1`, `instance-2`, …).
-4. Script de carga com **Locust** para gerar tráfego WebSocket e medir latência (p50/p95/p99),
+3. Script de carga com **Locust** para gerar tráfego WebSocket e medir latência (p50/p95/p99),
    throughput, perda de mensagens, CPU e memória.
