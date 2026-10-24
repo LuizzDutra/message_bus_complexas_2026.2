@@ -78,8 +78,9 @@ output must be attributed to an instance. Config is `pydantic-settings` reading 
   default and monkeypatch `websocket.bus`/`settings` to exercise the other modes.
 - `publish()` serializes the envelope and either broadcasts locally or publishes to the bus
   (`return 0`). `deliver()` handles bus messages (Redis **and** RabbitMQ): it broadcasts the **raw**
-  string (do not re-serialize) and excludes `connection_id` from the envelope so the sender never
-  gets an echo — each instance receives its own published event back.
+  string (do not re-serialize) and excludes the sender identified by `connection_id` (the field
+  stays in the envelope) so they never get an echo — each instance receives its own published event
+  back.
 - The WS handler wraps `await publish(...)` in `try/except Exception`: a broker outage **drops the
   event with a warning** and never kills the user's WebSocket (a raise used to close the connection
   without a close frame and crash `ws_client.py`). Regression: `test_conexao_ws_nao_cai_quando_o_barramento_falha`.
