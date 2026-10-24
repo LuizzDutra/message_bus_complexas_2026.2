@@ -55,7 +55,14 @@ async def websocket_message(websocket: WebSocket) -> None:
             if raw is None:
                 logger.debug("frame binario ignorado em %s", connection.id)
                 continue
-            await publish(_build_envelope(connection, raw), sender_id=connection.id)
+            try:
+                await publish(_build_envelope(connection, raw), sender_id=connection.id)
+            except Exception as exc:  # barramento fora do ar: nao derrubar a conexao WS
+                logger.warning(
+                    "falha ao publicar mensagem de %s; evento descartado (%s)",
+                    connection.id,
+                    exc,
+                )
     finally:
         await manager.disconnect(connection.id)
         logger.info("cliente %s desconectado de %s", connection.id, settings.instance_id)

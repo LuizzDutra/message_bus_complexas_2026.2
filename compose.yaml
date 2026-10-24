@@ -1,15 +1,17 @@
-# Sobe N instancias do servidor WebSocket + Redis Pub/Sub (barramento compartilhado).
-# Cada instancia tem seu INSTANCE_ID; mensagens atravessam instancias via Redis.
-# RabbitMQ ainda NAO esta integrado e so sobe com o profile "rabbitmq".
+# Sobe N instancias do servidor WebSocket + os brokers compartilhados.
+# Backend de entrega (BUS_BACKEND) e escolhido por env var:
+#   redis (default):  docker compose up --build
+#   rabbitmq:         BUS_BACKEND=rabbitmq docker compose --profile rabbitmq up --build
 name: complexas
 
 x-env: &app-env
   HOST: 0.0.0.0
   PORT: "8000"
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  BUS_BACKEND: redis
+  BUS_BACKEND: ${BUS_BACKEND:-redis}
   REDIS_URL: redis://redis:6379/0
   REDIS_CHANNEL: ${REDIS_CHANNEL:-complexas:ws}
+  RABBITMQ_URL: amqp://complexas:complexas@rabbitmq:5672/
 
 x-app: &app
   build:
@@ -17,6 +19,8 @@ x-app: &app
   image: complexas:local
   restart: unless-stopped
   environment: *app-env
+  # O rabbitmq tem profile ("rabbitmq") e por isso nao entra aqui; na variante RabbitMQ o
+  # container reinicia sozinho (restart policy) ate o broker ficar pronto.
   depends_on:
     redis:
       condition: service_healthy
@@ -72,8 +76,8 @@ services:
     networks:
       - bus
 
-  # Comparativo futuro: ainda nao consumido pela aplicacao.
-  #   docker compose --profile rabbitmq up --build
+  # Variante RabbitMQ (trocar o backend via BUS_BACKEND=rabbitmq):
+  #   BUS_BACKEND=rabbitmq docker compose --profile rabbitmq up --build
   rabbitmq:
     image: rabbitmq:4-management-alpine
     profiles: ["rabbitmq"]

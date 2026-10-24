@@ -33,10 +33,14 @@ class Settings(BaseSettings):
     log_level: str = "info"
 
     # "local" entrega apenas para as conexoes deste processo (default, usado nos testes).
-    # "redis" publica no Redis Pub/Sub e cada instancia entrega aos seus proprios clientes.
-    bus_backend: Literal["local", "redis"] = "local"
+    # "redis" publica no Redis Pub/Sub; "rabbitmq" publica em um exchange fanout.
+    # Em ambos os casos cada instancia entrega aos seus proprios clientes.
+    bus_backend: Literal["local", "redis", "rabbitmq"] = "local"
     redis_url: str = "redis://127.0.0.1:6379/0"
     redis_channel: str = "complexas:ws"
+    rabbitmq_url: str = "amqp://localhost:5672/"
+    rabbitmq_exchange: str = "complexas"
+    rabbitmq_queue_prefix: str = "complexas."
 
 
 settings = Settings()

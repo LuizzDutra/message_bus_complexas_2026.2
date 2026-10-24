@@ -113,7 +113,7 @@ async def main(args: argparse.Namespace) -> int:
     receivers = [asyncio.create_task(peer.receive_loop()) for peer in peers]
     try:
         await sender
-    except (KeyboardInterrupt, asyncio.CancelledError):
+    except (KeyboardInterrupt, asyncio.CancelledError, ConnectionClosed):
         pass
     finally:
         await _shutdown(peers, receivers)
@@ -165,13 +165,21 @@ async def _input_loop(peer: Peer) -> None:
             return
         if not text.strip():
             continue
-        await peer.ws.send(text)
+        try:
+            await peer.ws.send(text)
+        except ConnectionClosed:
+            print(f"{peer.tag} conexao encerrada; envio interrompido", flush=True)
+            return
         print(f"{peer.tag} -> {text}", flush=True)
 
 
 async def _message_loop(peer: Peer, message: str, interval: float) -> None:
     while True:
-        await peer.ws.send(message)
+        try:
+            await peer.ws.send(message)
+        except ConnectionClosed:
+            print(f"{peer.tag} conexao encerrada; envio interrompido", flush=True)
+            return
         print(f"{peer.tag} -> {message}", flush=True)
         await asyncio.sleep(interval)
 
