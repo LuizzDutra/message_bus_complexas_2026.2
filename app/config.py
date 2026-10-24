@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import Field
@@ -30,6 +31,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "info"
+
+    # "local" entrega apenas para as conexoes deste processo (default, usado nos testes).
+    # "redis" publica no Redis Pub/Sub e cada instancia entrega aos seus proprios clientes.
+    bus_backend: Literal["local", "redis"] = "local"
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    redis_channel: str = "complexas:ws"
 
 
 settings = Settings()

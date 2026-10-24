@@ -21,5 +21,6 @@ async def health() -> dict[str, Any]:
         "app": settings.app_name,
         "version": settings.app_version,
         "instance_id": settings.instance_id,
+        "bus_backend": settings.bus_backend,
         "uptime_seconds": round(time.monotonic() - _STARTED_AT, 3),
     }

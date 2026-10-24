@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.bus import bus
 from app.config import settings
 from app.routers import health, users, websocket
 from app.ws.manager import manager
@@ -27,9 +28,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
     logger.info("instancia %s iniciando (pid-based)", settings.instance_id)
+    if bus is not None:
+        await bus.start(websocket.deliver)
     try:
         yield
     finally:
+        if bus is not None:
+            await bus.close()
         await manager.close_all()
         logger.info("instancia %s encerrada", settings.instance_id)
 

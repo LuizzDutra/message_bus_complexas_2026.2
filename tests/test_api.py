@@ -26,6 +26,7 @@ def test_health(client: TestClient) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["instance_id"]
+    assert body["bus_backend"] == "local"
     assert body["uptime_seconds"] >= 0
 
 

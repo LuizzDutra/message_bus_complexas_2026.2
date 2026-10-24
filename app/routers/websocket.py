@@ -17,10 +17,10 @@ No handshake o cliente recebe um aviso de boas-vindas
 para saber sua origem e em qual instancia caiu (necessario nos testes
 comparativos entre instancias).
 
-O ponto de extensao do trabalho e a funcao `publish`: hoje ela entrega apenas
-para as conexoes locais; nas variantes com barramento ela passara a publicar no
-Redis (PUBLISH) ou no RabbitMQ (exchange) e cada instancia entregara aos seus
-proprios clientes ao receber o evento de volta.
+O ponto de extensao do trabalho e a funcao `publish`: com `BUS_BACKEND=redis` ela
+publica o envelope no Redis e cada instancia entrega aos seus proprios clientes ao
+receber o evento de volta (`deliver`); no modo `local` (default) ela entrega apenas
+para as conexoes deste processo.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket
 
+from app.bus import bus
 from app.config import settings
 from app.ws.manager import Connection, manager
 
@@ -63,13 +64,31 @@ async def websocket_message(websocket: WebSocket) -> None:
 async def publish(envelope: dict[str, Any], *, sender_id: str) -> int:
     """Entrega um evento aos clientes conectados.
 
-    >>> PONTO DE EXTENSAO DE BARRAMENTO <<<
-    Na versao final esta funcao publicara o envelope no barramento
-    (Redis Pub/Sub ou RabbitMQ) em vez de chamar `manager.broadcast` diretamente,
-    ou fara as duas coisas (entrega local + publicacao) caso esta instancia tambem
-    receba de volta o evento que publicou.
+    Sem barramento (`BUS_BACKEND=local`) entrega somente as conexoes locais.
+    Com Redis, publica no canal e retorna 0: a entrega acontece de forma assincrona
+    em `deliver`, quando o evento volta pelo subscribe de cada instancia.
     """
-    return await manager.broadcast(_dumps(envelope), exclude=(sender_id,))
+    message = _dumps(envelope)
+    if bus is None:
+        return await manager.broadcast(message, exclude=(sender_id,))
+    await bus.publish(message)
+    return 0
+
+
+async def deliver(message: str) -> int:
+    """Entrega um envelope recebido do barramento aos clientes locais.
+
+    Cada instancia recebe o proprio evento de volta; o remetente original e
+    filtrado pelo `connection_id` do envelope, evitando eco e entrega duplicada.
+    """
+    try:
+        envelope = json.loads(message)
+    except json.JSONDecodeError:
+        logger.warning("envelope invalido recebido do barramento: %r", message[:200])
+        return 0
+    sender = envelope.get("connection_id") if isinstance(envelope, dict) else None
+    exclude = (sender,) if isinstance(sender, str) else ()
+    return await manager.broadcast(message, exclude=exclude)
 
 
 def _build_envelope(connection: Connection, raw: str) -> dict[str, Any]:

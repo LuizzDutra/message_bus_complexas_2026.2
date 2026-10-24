@@ -5,12 +5,14 @@ Protótipo de um servidor **FastAPI** com suporte a **WebSockets** usado para co
 horizontalmente escaladas.
 
 O problema investigado: cada instância guarda apenas as suas próprias conexões WebSocket, então
-um evento gerado por um usuário na instância A precisa chegar ao usuário na instância B. Nesta
-etapa o servidor entrega apenas localmente — o `publish` é o ponto onde o barramento entrará.
+um evento gerado por um usuário na instância A precisa chegar ao usuário na instância B. A
+variante **Redis Pub/Sub** está implementada (`BUS_BACKEND=redis`); sem barramento o servidor
+entrega apenas localmente (`BUS_BACKEND=local`, default).
 
 ## Requisitos
 
 - [uv](https://docs.astral.sh/uv/) (gerencia Python, dependências e virtualenv)
+- Redis 7+ apenas para rodar com o barramento (`BUS_BACKEND=redis`) ou via Docker Compose
 
 ## Executar
 
@@ -20,12 +22,22 @@ uv run fastapi dev app/main.py # desenvolvimento (reload) em http://127.0.0.1:80
 uv run python -m app.main      # usa HOST/PORT do .env
 ```
 
+Por padrão a entrega é local. Para usar o Redis Pub/Sub:
+
+```bash
+docker run -d --name complexas-redis -p 6379:6379 redis:7-alpine
+BUS_BACKEND=redis uv run python -m app.main   # REDIS_URL/REDIS_CHANNEL opcionais
+```
+
+No PowerShell: `$env:BUS_BACKEND="redis"; uv run python -m app.main`. Confira o backend ativo em
+`GET /api/health` (campo `bus_backend`).
+
 Docs interativas: `http://127.0.0.1:8000/docs` (o `/ws/message` não aparece lá, WebSocket não é
 documentável no OpenAPI).
 
 ## Docker Compose
 
-`compose.yaml` sobe 3 instâncias do servidor, cada uma com seu `INSTANCE_ID`:
+`compose.yaml` sobe 3 instâncias do servidor **e o Redis**, já com `BUS_BACKEND=redis`:
 
 ```bash
 docker compose up --build          # instâncias nas portas 8000, 8001 e 8002
@@ -40,19 +52,23 @@ docker compose down
 | `instance-1` | 8000        | `instance-1`  |
 | `instance-2` | 8001        | `instance-2`  |
 | `instance-3` | 8002        | `instance-3`  |
+| `redis`      | 6379        | —             |
 
 A imagem (`Dockerfile`) usa a base do `uv` com Python 3.11, instala a partir do `uv.lock` e roda
-como usuário não-root. O `healthcheck` consulta `/api/health` dentro do container.
+como usuário não-root. O `healthcheck` consulta `/api/health` dentro do container; as instâncias só
+sobem depois do `redis` ficar saudável.
 
-Redis e RabbitMQ já estão declarados no compose, mas **não são usados pela aplicação ainda** — eles
-só sobem com o profile `brokers`:
+O RabbitMQ está declarado no compose mas **ainda não é usado pela aplicação**; ele só sobe com o
+profile `rabbitmq`:
 
 ```bash
-docker compose --profile brokers up --build
-# Redis: localhost:6379 | RabbitMQ: localhost:5672 (console em http://localhost:15672)
+docker compose --profile rabbitmq up --build
+# RabbitMQ: localhost:5672 (console em http://localhost:15672, user/pass: complexas)
 ```
 
-Para ver o problema entre instâncias, conecte um cliente em cada porta:
+Com o Redis ativo, mensagens agora atravessam instâncias. Abra um cliente em cada porta e envie pela
+conn1 de uma delas; o texto deve aparecer no cliente da outra instância (e não volta para quem
+enviou):
 
 ```bash
 uv run python scripts/ws_client.py -u ws://127.0.0.1:8000/ws/message -n 2
@@ -63,7 +79,7 @@ uv run python scripts/ws_client.py -u ws://127.0.0.1:8001/ws/message -n 2
 
 | Método | Rota                 | Descrição                                                              |
 | ------ | -------------------- | ---------------------------------------------------------------------- |
-| GET    | `/api/health`        | Status do servidor: versão, `instance_id` e uptime                     |
+| GET    | `/api/health`        | Status do servidor: versão, `instance_id`, `bus_backend` e uptime      |
 | GET    | `/api/count/users`   | Quantos usuários estão conectados **nesta instância**                  |
 | WS     | `/ws/message`        | Recebe a carga e repassa para **todos os outros** usuários conectados  |
 
@@ -85,10 +101,17 @@ Depois disso, **todo** frame de texto enviado é repassado aos demais clientes c
 
 - Se o frame for JSON, o valor decodificado vai inteiro em `payload`.
 - Se for texto puro, o próprio texto vira `payload` (`"payload": "ping"`).
-- O remetente não recebe a própria mensagem.
+- O remetente não recebe a própria mensagem, inclusive quando a entrega passa pelo Redis.
+- Com `BUS_BACKEND=redis`, o envelope publicado pela instância de origem volta pelo `SUBSCRIBE` de
+  todas as instâncias (a de origem apenas filtra o remetente); o `instance_id` no envelope indica
+  onde a conexão original está.
 - Frames binários são ignorados neste protótipo.
 - Nota de implementação: não há backpressure por conexão — um cliente lento acumula frames no
   buffer de saída do próprio WebSocket. Isso deve ser levado em conta nos testes de carga.
+- Redis Pub/Sub não persiste mensagens: instâncias desconectadas perdem eventos (comportamento
+  esperado para o comparativo com RabbitMQ).
+- O barramento reassina o canal automaticamente após uma queda do Redis; mensagens publicadas
+  durante a janela de reconexão são perdidas.
 
 ## Cliente WebSocket para teste manual
 
@@ -113,26 +136,30 @@ conn2/a48d9a46 <- payload="ola mundo" de=917b3988 instance=instance-…
 ```
 
 Para testar o cenário entre instâncias, aponte um cliente para cada porta em terminais separados
-(`-u ws://127.0.0.1:8000/ws/message` e `-u ws://127.0.0.1:8001/ws/message`). Hoje nada atravessa
-de uma instância para a outra — é exatamente o que o barramento vai resolver.
+(`-u ws://127.0.0.1:8000/ws/message` e `-u ws://127.0.0.1:8001/ws/message`). Com o Redis ativo
+(`BUS_BACKEND=redis`), o que for enviado em uma instância chega aos clientes da outra.
 
 ## Estrutura
 
 ```
 app/
-  main.py               # cria a aplicação, lifespan e routers
-  config.py             # Settings (pydantic-settings): INSTANCE_ID, HOST, PORT, LOG_LEVEL
+  main.py               # cria a aplicação, lifespan (start/close do barramento) e routers
+  config.py             # Settings: INSTANCE_ID, HOST, PORT, LOG_LEVEL, BUS_BACKEND, REDIS_*
+  bus/
+    __init__.py         # create_bus(): Redis quando BUS_BACKEND=redis, senão entrega local
+    redis.py            # RedisBus: PUBLISH + task de SUBSCRIBE com reconexão
   routers/
     health.py           # GET /api/health
     users.py            # GET /api/count/users
-    websocket.py        # WS /ws/message + função publish() -> ponto de extensão do barramento
+    websocket.py        # WS /ws/message + publish() e deliver() (barramento)
   ws/
     manager.py          # ConnectionManager: registro das conexões locais, send/broadcast/disconnect
 scripts/
   ws_client.py          # cliente WebSocket de linha de comando (teste manual)
 tests/
   test_api.py           # testes de fumaça (HTTP + broadcast via WebSocket)
-compose.yaml            # 3 instâncias + Redis/RabbitMQ (profile brokers)
+  test_bus.py           # publish/deliver e RedisBus com fakeredis (sem Redis externo)
+compose.yaml            # 3 instâncias + Redis; RabbitMQ no profile "rabbitmq"
 Dockerfile              # imagem da aplicação (Python 3.11 + uv)
 ```
 
@@ -144,10 +171,12 @@ uv run ruff check .
 uv run ruff format .
 ```
 
+Os testes não precisam de Redis externo: `tests/test_bus.py` usa `fakeredis` e o modo default é
+`BUS_BACKEND=local`. Para exercitar o barramento de verdade, use o compose ou um Redis local.
+
 ## Próximos passos
 
-1. Implementar a variante **Redis Pub/Sub** (`publish` → `PUBLISH` + task de `SUBSCRIBE` por
-   instância).
-2. Implementar a variante **RabbitMQ** (exchange fanout + fila durável por instância, com acks).
-3. Script de carga com **Locust** para gerar tráfego WebSocket e medir latência (p50/p95/p99),
+1. Implementar a variante **RabbitMQ** (exchange fanout + fila durável por instância, com acks) e
+   comparar com o Redis já disponível.
+2. Script de carga com **Locust** para gerar tráfego WebSocket e medir latência (p50/p95/p99),
    throughput, perda de mensagens, CPU e memória.
