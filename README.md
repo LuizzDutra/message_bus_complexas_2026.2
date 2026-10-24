@@ -136,6 +136,7 @@ digitar — sem depender do pacote `app`.
 uv run python scripts/ws_client.py                              # 1 conexao, modo interativo
 uv run python scripts/ws_client.py -n 2                         # 2 conexoes: o teclado envia pela conn1
 uv run python scripts/ws_client.py -m '{"texto":"oi"}' -i 0.5   # envia sozinho a cada 0,5 s
+uv run python scripts/ws_client.py -c -i 0.5                    # contador: envia 0, 1, 2, ... (ignora -m)
 uv run python scripts/ws_client.py -u ws://127.0.0.1:8001/ws/message
 ```
 
@@ -148,6 +149,9 @@ conn2/a48d9a46 conectada (instance=instance-…, usuarios nesta instancia=2)
 conn1/917b3988 -> ola mundo
 conn2/a48d9a46 <- payload="ola mundo" de=917b3988 instance=instance-…
 ```
+
+O modo contador (`-c`) é útil para conferir ordem e perda de mensagens no barramento: ele ignora
+`-m` e envia `0`, `1`, `2`, … a cada `-i` segundos (`-c` só é válido junto com `-i`).
 
 Para testar o cenário entre instâncias, aponte um cliente para cada porta em terminais separados
 (`-u ws://127.0.0.1:8000/ws/message` e `-u ws://127.0.0.1:8001/ws/message`). Com um barramento

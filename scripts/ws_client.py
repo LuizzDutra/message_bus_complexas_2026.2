@@ -7,6 +7,7 @@ Exemplos:
     uv run python scripts/ws_client.py                      # 1 conexao, modo interativo
     uv run python scripts/ws_client.py -n 2                 # 2 conexoes: o teclado envia pela conn1
     uv run python scripts/ws_client.py -m '{"texto":"oi"}' -i 0.5
+    uv run python scripts/ws_client.py -c -i 0.5     # contador: envia 0, 1, 2, ... (ignora -m)
     uv run python scripts/ws_client.py -u ws://127.0.0.1:8001/ws/message
 
 No modo interativo digite e pressione Enter para enviar. Com `-n 2` voce ve que a
@@ -84,10 +85,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-i",
         "--interval",
         type=float,
-        default=1.0,
-        help="intervalo em segundos entre envios no modo --message (default: 1.0)",
+        default=None,
+        help="intervalo em segundos entre envios no modo --message ou --counter (default: 1.0)",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "-c",
+        "--counter",
+        action="store_true",
+        help=(
+            "modo contador: ignora -m e envia numeros crescentes (0, 1, 2, ...) pela conn1; "
+            "requer -i"
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.counter and args.interval is None:
+        parser.error("-c/--counter requer -i/--interval")
+    if args.interval is None:
+        args.interval = 1.0
+    return args
 
 
 async def main(args: argparse.Namespace) -> int:
@@ -103,7 +118,12 @@ async def main(args: argparse.Namespace) -> int:
         return 1
 
     print(f"conectado em {url} com {len(peers)} conexao(oes).")
-    if args.message:
+    if args.counter:
+        print(
+            f"enviando contagem 0, 1, 2, ... a cada {args.interval}s pela conn1 (Ctrl+C para sair)."
+        )
+        sender = asyncio.create_task(_counter_loop(peers[0], args.interval))
+    elif args.message:
         print(f"enviando {args.message!r} a cada {args.interval}s pela conn1 (Ctrl+C para sair).")
         sender = asyncio.create_task(_message_loop(peers[0], args.message, args.interval))
     else:
@@ -181,6 +201,24 @@ async def _message_loop(peer: Peer, message: str, interval: float) -> None:
             print(f"{peer.tag} conexao encerrada; envio interrompido", flush=True)
             return
         print(f"{peer.tag} -> {message}", flush=True)
+        await asyncio.sleep(interval)
+
+
+async def _counter_loop(peer: Peer, interval: float) -> None:
+    """Envia numeros crescentes (0, 1, 2, ...) a cada `interval` segundos.
+
+    Ignora `-m`: util para conferir ordem e perda de mensagens no barramento.
+    """
+    counter = 0
+    while True:
+        message = str(counter)
+        try:
+            await peer.ws.send(message)
+        except ConnectionClosed:
+            print(f"{peer.tag} conexao encerrada; envio interrompido", flush=True)
+            return
+        print(f"{peer.tag} -> {message}", flush=True)
+        counter += 1
         await asyncio.sleep(interval)
 
 
