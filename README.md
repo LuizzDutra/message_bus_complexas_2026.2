@@ -258,6 +258,10 @@ Em cargas altas o gerador pode virar o gargalo: `COMPLEXAS_BUS_LATENCY=0` deslig
 métrica de latência (metade dos eventos no Locust; o alívio é pequeno em 60 usuários, mas ajuda
 quando o gerador satura). `--processes` não existe no Windows.
 
+Para usar `--processes` no Windows, rode o gerador no WSL/Linux. Use um ambiente separado
+(`UV_PROJECT_ENVIRONMENT=.venv-wsl` no shell do WSL): o `uv` de lá enxerga o mesmo `.venv` do
+repositório montado e o recria como venv Linux, quebrando o venv do Windows.
+
 ### CPU e memória
 
 ```bash
