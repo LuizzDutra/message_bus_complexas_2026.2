@@ -12,5 +12,8 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Resultados do teste de carga
+results/
+
 
 /.reasonix/
