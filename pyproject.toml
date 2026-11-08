@@ -14,8 +14,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "fakeredis>=2.40.0",
+    "locust>=2.47.0",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
+    "websocket-client>=1.9.2",
 ]
 
 [tool.pytest.ini_options]
