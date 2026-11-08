@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 
 import pytest
 
@@ -14,6 +15,7 @@ from loadtest.protocol import (
     normalize_ws_url,
     parse_hosts,
     parse_incoming,
+    rotate_urls,
 )
 
 
@@ -108,3 +110,25 @@ def test_parse_hosts_aceita_lista_separada_por_virgula() -> None:
 def test_parse_hosts_vazio_retorna_lista_vazia() -> None:
     assert parse_hosts("") == []
     assert parse_hosts(None) == []
+
+
+def test_rotate_urls_distribui_o_inicio_por_offset() -> None:
+    urls = ["a", "b", "c"]
+
+    assert rotate_urls(urls, 0) == ["a", "b", "c"]
+    assert rotate_urls(urls, 1) == ["b", "c", "a"]
+    assert rotate_urls(urls, 4) == ["b", "c", "a"]
+    assert rotate_urls(urls, -1) == ["c", "a", "b"]
+    assert rotate_urls([], 3) == []
+
+
+def test_rotate_urls_equilibra_usuarios_entre_instancias() -> None:
+    urls = [f"instance-{n}" for n in range(6)]
+    totals: Counter[str] = Counter()
+
+    for worker in range(12):
+        ordered = rotate_urls(urls, worker)
+        for user in range(10):
+            totals[ordered[user % len(ordered)]] += 1
+
+    assert set(totals.values()) == {20}

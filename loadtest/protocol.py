@@ -109,3 +109,15 @@ def parse_hosts(value: str | None) -> list[str]:
         return []
     parts = value.replace("\n", ",").split(",")
     return [normalize_ws_url(part) for part in parts if part.strip()]
+
+
+def rotate_urls(urls: list[str], offset: int) -> list[str]:
+    """Rotaciona a lista para cada worker iniciar o round-robin em uma instancia diferente.
+
+    Sem isso todo worker comeca na primeira URL e a distribuicao fica enviesada
+    (ex.: 12 workers com 10 usuarios em 3 instancias mandam 48/36/36).
+    """
+    if not urls:
+        return []
+    start = offset % len(urls)
+    return urls[start:] + urls[:start]

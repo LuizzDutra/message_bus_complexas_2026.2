@@ -32,6 +32,7 @@ from loadtest.protocol import (
     normalize_ws_url,
     parse_hosts,
     parse_incoming,
+    rotate_urls,
 )
 
 if TYPE_CHECKING:
@@ -49,15 +50,16 @@ COUNTERS: Counter[str] = Counter()
 _urls: Iterator[str] | None = None
 
 
-def _pick_url(host: str | None) -> str:
-    """Alterna entre as instancias em round-robin a cada nova conexao."""
+def _pick_url(host: str | None, offset: int = 0) -> str:
+    """Alterna entre as instancias em round-robin, comecando no offset do worker."""
     global _urls
     if _urls is None:
         resolved = parse_hosts(os.environ.get("COMPLEXAS_WS_URLS"))
         if not resolved:
             resolved = [normalize_ws_url(host or DEFAULT_URL)]
-        _urls = cycle(resolved)
-        logger.info("locust alternando entre %d URL(s): %s", len(resolved), ", ".join(resolved))
+        ordered = rotate_urls(resolved, offset)
+        _urls = cycle(ordered)
+        logger.info("locust alternando entre %d URL(s): %s", len(ordered), ", ".join(ordered))
     return next(_urls)
 
 
@@ -169,7 +171,12 @@ class ComplexasUser(User):
     wait_time = constant_pacing(MESSAGE_INTERVAL)
 
     def on_start(self) -> None:
-        self.ws = WebSocketClient(_pick_url(self.environment.host), self.environment)
+        runner = self.environment.runner
+        offset = getattr(runner, "worker_index", 0) if runner is not None else 0
+        self.ws = WebSocketClient(
+            _pick_url(self.environment.host, offset),
+            self.environment,
+        )
         try:
             self.ws.connect()
         except Exception as exc:
