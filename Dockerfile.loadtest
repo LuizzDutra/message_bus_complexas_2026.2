@@ -1,0 +1,15 @@
+# Cliente de carga (Locust) para rodar dentro da rede do compose, sem o proxy de portas do host.
+# Uso: docker compose --profile loadtest run --rm loadtest --headless -u 120 ... --csv results/run
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir locust==2.47.0 websocket-client==1.9.2
+
+COPY loadtest ./loadtest
+
+ENTRYPOINT ["locust", "-f", "/app/loadtest/locustfile.py"]
+CMD ["--list"]

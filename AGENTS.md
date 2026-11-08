@@ -43,6 +43,10 @@ docker compose up --build -d                       # Redis variant (default)
 BUS_BACKEND=rabbitmq docker compose --profile rabbitmq up --build -d   # RabbitMQ variant
 docker compose ps                                  # healthchecks hit /api/health internally
 docker compose down
+
+# Load client inside the bus network (profile-only; no host port proxy)
+docker compose --profile loadtest run --rm -T loadtest --headless -u 120 -r 10 -t 2m \
+  --processes 12 --csv results/in-docker --only-summary
 ```
 
 - Backend comes from interpolation `BUS_BACKEND: ${BUS_BACKEND:-redis}` in `x-env`, so the env var
@@ -55,6 +59,9 @@ docker compose down
 - `.dockerignore` excludes everything except `README.md` among markdown files, so `AGENTS.md` never
   reaches the image.
 - Compose is validated with `docker compose config`; a Docker daemon is required to actually build.
+- `loadtest` is profile-only (`loadtest`): `Dockerfile.loadtest` installs pinned Locust and
+  `websocket-client`, the service joins `bus` and reaches `instance-N:8000` without host port
+  forwarding, and `results/` is mounted. The Locust container's CPU shows in `docker stats`.
 
 ## Multi-instance manual testing (without Docker)
 

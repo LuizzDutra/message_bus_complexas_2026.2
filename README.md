@@ -187,6 +187,7 @@ tests/
   test_loadtest_protocol.py  # funções puras do teste de carga (sem Locust)
 compose.yaml            # 3 instâncias; backend por BUS_BACKEND, RabbitMQ no profile "rabbitmq"
 Dockerfile              # imagem da aplicação (Python 3.11 + uv)
+Dockerfile.loadtest     # imagem do cliente de carga (profile "loadtest")
 ```
 
 ## Testes e lint
@@ -234,6 +235,21 @@ No PowerShell, troque a variável por
 Sem `COMPLEXAS_WS_URLS`, o Locust usa `--host` (aceita `http://`, `https://` ou `ws://`) ou o
 default `ws://127.0.0.1:8000/ws/message`. As conexões são distribuídas em round-robin entre as
 URLs.
+
+### Cliente dentro da rede Docker
+
+Para tirar o proxy de portas do host da medição, o `compose.yaml` tem um serviço `loadtest` no
+profile `loadtest` (imagem `Dockerfile.loadtest`) que roda na mesma rede e usa
+`ws://instance-N:8000/ws/message`:
+
+```bash
+docker compose --profile loadtest run --rm -T loadtest --headless -u 120 -r 10 -t 2m \
+  --processes 12 --csv results/in-docker --only-summary
+```
+
+O container do Locust aparece no `docker stats` (~3 núcleos). Se a latência não cair em relação ao
+cliente no host, o proxy não é o gargalo — foi o que aconteceu com o Redis (92/200/230 ms contra
+96/180/210 ms).
 
 ### O que aparece no relatório
 

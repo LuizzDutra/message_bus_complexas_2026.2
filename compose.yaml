@@ -62,6 +62,24 @@ services:
     ports:
       - "8002:8000"
 
+  # Cliente de carga dentro da rede (sem o proxy de portas do host).
+  #   docker compose --profile loadtest run --rm loadtest --headless -u 120 -r 10 -t 2m \
+  #     --processes 12 --csv results/in-docker --only-summary
+  loadtest:
+    profiles: ["loadtest"]
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    image: complexas-loadtest:local
+    shm_size: 1gb
+    environment:
+      COMPLEXAS_WS_URLS: ws://instance-1:8000/ws/message,ws://instance-2:8000/ws/message,ws://instance-3:8000/ws/message
+      COMPLEXAS_MSG_INTERVAL: ${COMPLEXAS_MSG_INTERVAL:-1.0}
+    volumes:
+      - ./results:/app/results
+    networks:
+      - bus
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
