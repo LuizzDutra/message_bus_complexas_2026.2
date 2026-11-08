@@ -254,6 +254,11 @@ A latência é medida no cliente, então inclui a fila do processo do Locust: co
 3 instâncias o gerador ficou em ~34% de CPU e a mediana em ~50 ms. Use os números para comparar
 variantes nas mesmas condições, não como latência pura do servidor.
 
+O fan-out é O(N²): com N usuários a R mensagens/s por usuário, o total de entregas é R×N×(N−1)
+e cada uma das K instâncias entrega R×(N−1)/K por segundo. Com 120 usuários a 1 msg/s e 3
+instâncias são ~4,5 mil entregas/s por instância; mais instâncias reduzem esse valor linearmente
+(e o gerador também precisa acompanhar as entregas, não só os envios).
+
 Em cargas altas o gerador pode virar o gargalo: `COMPLEXAS_BUS_LATENCY=0` desliga a segunda
 métrica de latência (metade dos eventos no Locust; o alívio é pequeno em 60 usuários, mas ajuda
 quando o gerador satura). `--processes` não existe no Windows.
@@ -309,8 +314,8 @@ janela de reconexão. Meça os dois cenários com o resumo do Locust — a perda
 Para achar a capacidade, suba os usuários em degraus (por exemplo 20, 50, 100 e 200), mantendo
 cada degrau por pelo menos 1–2 minutos, até o p95 estourar o alvo ou aparecer perda. Repita uma
 vez o degrau vencedor: uma execução isolada é anedota, não capacidade. Se o processo do Locust
-ficar em 100% de CPU (ou `envio`/req/s ficar muito abaixo dos usuários configurados), o gargalo é
-o gerador, não o servidor.
+ficar em 100% de CPU (com `--processes`, olhe o CPU total do host, não só de cada worker) ou
+`envio`/req/s ficar muito abaixo dos usuários configurados, o gargalo é o gerador, não o servidor.
 
 ## Próximos passos
 
