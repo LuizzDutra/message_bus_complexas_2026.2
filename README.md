@@ -256,8 +256,11 @@ variantes nas mesmas condições, não como latência pura do servidor.
 
 O fan-out é O(N²): com N usuários a R mensagens/s por usuário, o total de entregas é R×N×(N−1)
 e cada uma das K instâncias entrega R×(N−1)/K por segundo. Com 120 usuários a 1 msg/s e 3
-instâncias são ~4,5 mil entregas/s por instância; mais instâncias reduzem esse valor linearmente
-(e o gerador também precisa acompanhar as entregas, não só os envios).
+instâncias são ~4,5 mil entregas/s por instância; mais instâncias reduzem esse valor linearmente,
+mas isso não garante menor latência: nos testes, 3 e 6 instâncias empataram e 240 usuários/12
+instâncias a 0,25 msg/s tiveram a mesma latência do cenário 120/3. Acima de ~13 mil entregas/s o
+gargalo compartilhado (gerador/host) dominou; o gerador também precisa acompanhar as entregas,
+não só os envios.
 
 Em cargas altas o gerador pode virar o gargalo: `COMPLEXAS_BUS_LATENCY=0` desliga a segunda
 métrica de latência (metade dos eventos no Locust; o alívio é pequeno em 60 usuários, mas ajuda
