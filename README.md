@@ -176,10 +176,15 @@ app/
     manager.py          # ConnectionManager: registro das conexões locais, send/broadcast/disconnect
 scripts/
   ws_client.py          # cliente WebSocket de linha de comando (teste manual)
+loadtest/
+  locustfile.py         # expõe ComplexasUser para o Locust
+  protocol.py           # funções puras: payload, envelope, lacunas, URL
+  ws_user.py            # cliente WebSocket + usuário Locust (latência/perda)
 tests/
   test_api.py           # testes de fumaça (HTTP + broadcast via WebSocket)
   test_bus.py           # publish/deliver e RedisBus com fakeredis (sem Redis externo)
   test_rabbitmq_bus.py  # RabbitMQBus com fakes de AMQP (sem broker externo)
+  test_loadtest_protocol.py  # funções puras do teste de carga (sem Locust)
 compose.yaml            # 3 instâncias; backend por BUS_BACKEND, RabbitMQ no profile "rabbitmq"
 Dockerfile              # imagem da aplicação (Python 3.11 + uv)
 ```
@@ -196,7 +201,114 @@ Os testes não precisam de serviços externos: `tests/test_bus.py` usa `fakeredi
 `tests/test_rabbitmq_bus.py` usa fakes de AMQP e o modo default é `BUS_BACKEND=local`. Para
 exercitar os barramentos de verdade, use o compose.
 
+## Teste de carga com Locust
+
+`loadtest/` gera tráfego WebSocket e mede latência ponta a ponta (p50/p95/p99),
+throughput, perda de mensagens e o custo do próprio barramento. O Locust e o
+`websocket-client` são dependências de desenvolvimento: `uv sync` já os instala e a
+imagem Docker continua sem eles (`uv sync --no-dev`).
+
+Cada usuário Locust mantém uma conexão em `/ws/message` e envia uma mensagem JSON por
+segundo (ajuste com `COMPLEXAS_MSG_INTERVAL`). O remetente nunca recebe a própria
+mensagem, então **use ao menos 2 usuários**; com 1 usuário nada é recebido.
+
+### Uma instância (modo local)
+
+```bash
+uv run python -m app.main                        # terminal 1 (BUS_BACKEND=local)
+uv run locust -f loadtest/locustfile.py --headless -u 4 -r 4 -t 20s --only-summary
+```
+
+### Três instâncias do compose
+
+```bash
+docker compose up --build -d                     # variante Redis
+COMPLEXAS_WS_URLS=ws://127.0.0.1:8000,ws://127.0.0.1:8001,ws://127.0.0.1:8002 \
+  uv run locust -f loadtest/locustfile.py --headless -u 60 -r 10 -t 2m \
+  --csv results/redis --only-summary
+```
+
+No PowerShell, troque a variável por
+`$env:COMPLEXAS_WS_URLS="ws://127.0.0.1:8000,ws://127.0.0.1:8001,ws://127.0.0.1:8002"`.
+
+Sem `COMPLEXAS_WS_URLS`, o Locust usa `--host` (aceita `http://`, `https://` ou `ws://`) ou o
+default `ws://127.0.0.1:8000/ws/message`. As conexões são distribuídas em round-robin entre as
+URLs.
+
+### O que aparece no relatório
+
+| Nome                     | O que mede                                                     |
+| ------------------------ | -------------------------------------------------------------- |
+| `conexao`                | handshake WebSocket                                            |
+| `envio`                  | só a escrita local no socket (contagem das mensagens enviadas) |
+| `latencia_ponta_a_ponta` | `sent_at` do cliente → recebimento em outro cliente            |
+| `latencia_barramento`    | `server_timestamp` do ingest → recebimento em outro cliente    |
+
+A taxa oferecida é `envio`/req/s; a taxa de entregas é `latencia_ponta_a_ponta`/req/s (cada
+mensagem vai para todos os outros usuários). `Aggregated` mistura as duas, não use como
+throughput. Ao final, além da tabela do Locust, é impresso um resumo com enviadas, recebidas,
+lacunas (perda), repetidas/fora de ordem e conexões por instância. O CSV
+(`results/redis_stats.csv`) traz p50/p66/p75/p80/p90/p95/p98/p99.
+
+A latência é medida no cliente, então inclui a fila do processo do Locust: com 60 usuários nas
+3 instâncias o gerador ficou em ~34% de CPU e a mediana em ~50 ms. Use os números para comparar
+variantes nas mesmas condições, não como latência pura do servidor.
+
+Em cargas altas o gerador pode virar o gargalo: `COMPLEXAS_BUS_LATENCY=0` desliga a segunda
+métrica de latência (metade dos eventos no Locust; o alívio é pequeno em 60 usuários, mas ajuda
+quando o gerador satura). `--processes` não existe no Windows.
+
+### CPU e memória
+
+```bash
+mkdir -p results
+echo 'nome,cpu,memoria' > results/redis_docker.csv
+( while :; do
+    docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}}' \
+      >> results/redis_docker.csv
+    sleep 5
+  done ) &
+STATS_PID=$!
+# rode o locust e depois:
+kill "$STATS_PID"
+```
+
+### Comparando Redis × RabbitMQ
+
+Use o mesmo número de instâncias, de usuários e de duração nas duas variantes:
+
+```bash
+docker compose down
+BUS_BACKEND=redis docker compose up --build -d
+# espere `docker compose ps` mostrar os 3 "healthy" e confira:
+for p in 8000 8001 8002; do curl -s "http://127.0.0.1:$p/api/health"; echo; done
+# rode o locust com --csv results/redis e guarde o resumo impresso
+
+docker compose --profile rabbitmq down
+BUS_BACKEND=rabbitmq docker compose --profile rabbitmq up --build -d
+# repita o mesmo comando do locust com --csv results/rabbitmq
+
+# profundidade das filas do RabbitMQ durante a carga:
+docker compose exec rabbitmq rabbitmqctl list_queues name messages messages_unacknowledged
+```
+
+Se `messages`/`messages_unacknowledged` crescerem durante a carga estável, o consumidor
+(`prefetch_count=1`, ack manual) não está acompanhando — é o custo do at-least-once. No Redis a
+perda aparece no resumo do Locust, porque Pub/Sub é at-most-once.
+
+Reiniciar o broker durante a carga também gera perda nos dois modos: com o broker fora, `publish`
+falha, o handler descarta o evento e registra warning (o WebSocket do cliente continua vivo). O
+RabbitMQ preserva o que já estava na fila e reentrega após reconectar; o Redis Pub/Sub perde a
+janela de reconexão. Meça os dois cenários com o resumo do Locust — a perda do RabbitMQ vem do
+`publish` descartado durante a indisponibilidade, não da fila durável.
+
+Para achar a capacidade, suba os usuários em degraus (por exemplo 20, 50, 100 e 200), mantendo
+cada degrau por pelo menos 1–2 minutos, até o p95 estourar o alvo ou aparecer perda. Repita uma
+vez o degrau vencedor: uma execução isolada é anedota, não capacidade. Se o processo do Locust
+ficar em 100% de CPU (ou `envio`/req/s ficar muito abaixo dos usuários configurados), o gargalo é
+o gerador, não o servidor.
+
 ## Próximos passos
 
-1. Script de carga com **Locust** para gerar tráfego WebSocket e medir latência (p50/p95/p99),
-   throughput, perda de mensagens, CPU e memória — comparando `redis` × `rabbitmq`.
+1. Rodar a mesma matriz de carga em máquinas separadas (gerador e servidores) para descartar o
+   gargalo do próprio gerador Locust.

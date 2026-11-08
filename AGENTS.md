@@ -21,6 +21,12 @@ uv run pytest tests/test_bus.py -q       # Redis bus tests (fakeredis)
 uv run pytest tests/test_rabbitmq_bus.py -q   # RabbitMQ bus tests (AMQP fakes)
 uv run ruff check . && uv run ruff format --check .   # lint + format gate
 uv run ruff format .                     # apply formatting
+
+# Load test (Locust, dev-only dependency)
+uv run locust -f loadtest/locustfile.py --list          # validate locustfile, no connection
+uv run locust -f loadtest/locustfile.py --headless -u 4 -r 4 -t 20s --only-summary
+COMPLEXAS_WS_URLS=ws://127.0.0.1:8000,ws://127.0.0.1:8001,ws://127.0.0.1:8002 \
+  uv run locust -f loadtest/locustfile.py --headless -u 60 -r 10 -t 2m --csv results/redis
 ```
 
 - Do not invoke `.venv/Scripts/python` or `pip` directly; `uv run` keeps the lock in sync.
@@ -101,6 +107,14 @@ output must be attributed to an instance. Config is `pydantic-settings` reading 
 - `connection_id` is generated per connection (`uuid4().hex`), not per user.
 - New routers must be registered in `create_app()` in `app/main.py`; shutdown cleanup lives in the
   `lifespan` handler (`manager.close_all()`).
+- `loadtest/` is dev-only and never reaches the image (`Dockerfile` copies only `app` and `scripts`;
+  `uv sync --no-dev`). `protocol.py` holds the pure helpers, `ws_user.py` the WebSocket client and
+  the Locust user, and `locustfile.py` only re-exports `ComplexasUser` — importing `User` straight
+  into the locustfile would register it as a second, task-less user class and split the traffic.
+- The load test measures three things on purpose: `latencia_ponta_a_ponta` (payload `sent_at` until
+  another client receives), `latencia_barramento` (envelope `server_timestamp` until receipt, which
+  isolates the bus hop), and gap-based loss from the per-sender `seq`. `envio` is only the local
+  socket write and serves as the offered-rate counter.
 
 ## Testing gotchas
 
@@ -119,6 +133,9 @@ output must be attributed to an instance. Config is `pydantic-settings` reading 
   real broker and every test error at setup. Keep hermeticity there, not in each test.
 - `fastapi.testclient` works because `fastapi[standard]` pulls in `websockets`/`httpx`; no extra
   dev dependency is needed for `scripts/ws_client.py`.
+- Never import `loadtest.ws_user` (or `locust`) from pytest: importing Locust runs
+  `gevent.monkey.patch_all()` process-wide and can break `starlette.testclient`/asyncio in the
+  existing suite. `tests/test_loadtest_protocol.py` covers only `loadtest/protocol.py`.
 
 ## Conventions
 
